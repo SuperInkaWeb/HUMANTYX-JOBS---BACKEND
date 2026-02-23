@@ -14,7 +14,7 @@ exports.applyToJob = async (req, res) => {
       return res.status(400).json({ message: "job_id es requerido" });
     }
 
-    // ✅ 1) Validar perfil completo (producto real)
+    // 1) Validar perfil completo 
     const profileRes = await pool.query(
       `SELECT first_name, last_name, phone, dni
        FROM candidate_profiles

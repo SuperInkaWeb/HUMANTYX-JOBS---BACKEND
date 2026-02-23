@@ -16,6 +16,8 @@ app.use("/candidate", require("./routes/candidate.routes"));
 app.use("/admin/jobs", require("./routes/jobs.admin.routes"));
 app.use(applicationsRoutes);
 app.use("/jobs", jobsPublicRoutes);
+app.use("/admin/users", require("./routes/admin.users.routes"));
+
 
 
 
