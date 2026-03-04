@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const pool = require("../db");
+const { sendInviteEmail } = require("../services/mailer");
 
 // POST /admin/users/invite  (ADMIN)
 // body: { email, role }  role: RRHH | ADMIN
@@ -51,13 +52,23 @@ exports.inviteUser = async (req, res) => {
     const inviteUrl = `${FRONT_URL}/set-password?token=${token}&email=${encodeURIComponent(cleanEmail)}`;
 
     // Si ya tienes servicio de correo, aquí lo llamas (opcional)
+    let mailSent = false;
+
+    try {
+      await sendInviteEmail(cleanEmail, inviteUrl, cleanRole);
+      mailSent = true;
+    } catch (mailErr) {
+      console.error("Error enviando email:", mailErr);
+      mailSent = false;
+    }
     // await sendInviteEmail(cleanEmail, inviteUrl)
 
     return res.status(201).json({
       invite: ins.rows[0],
-      invite_url: inviteUrl,
-      // OJO: token solo lo devolvemos para demo/dev. En prod, lo ideal es solo enviarlo por email.
-      token,
+      mail_sent: mailSent,
+      invite_url: mailSent ? null : inviteUrl, // fallback si falla email
+      ...(process.env.NODE_ENV !== "production" && { token }), // solo en dev
+
     });
   } catch (err) {
     console.error(err);

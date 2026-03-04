@@ -8,15 +8,15 @@ const pool = require("../db");
 exports.applyToJob = async (req, res) => {
   try {
     const candidateId = req.user.id;
-    const { job_id } = req.body;
+    const { job_id } = req.body || {};
 
     if (!job_id) {
       return res.status(400).json({ message: "job_id es requerido" });
     }
 
-    // 1) Validar perfil completo 
+    // 1) Validar perfil completo (defensivo, aunque tengas middleware)
     const profileRes = await pool.query(
-      `SELECT first_name, last_name, phone, dni
+      `SELECT first_name, last_name, phone, document_type, document_number
        FROM candidate_profiles
        WHERE user_id = $1`,
       [candidateId]
@@ -25,12 +25,18 @@ exports.applyToJob = async (req, res) => {
     const p = profileRes.rows[0];
 
     const incomplete =
-      !p || !p.first_name || !p.last_name || !p.phone || !p.dni;
+      !p ||
+      !p.first_name ||
+      !p.last_name ||
+      !p.phone ||
+      !p.document_type ||
+      !p.document_number;
 
     if (incomplete) {
-      return res.status(400).json({
+      return res.status(403).json({
         message:
-          "Perfil incompleto. Completa nombres, apellidos, teléfono y DNI antes de postular.",
+          "Perfil incompleto. Completa nombres, apellidos, teléfono y tu documento (tipo y número) antes de postular.",
+        code: "PROFILE_INCOMPLETE",
       });
     }
 
@@ -44,7 +50,7 @@ exports.applyToJob = async (req, res) => {
       return res.status(404).json({ message: "Vacante no encontrada" });
     }
 
-    //  bloquear postulación a CLOSED:
+    // bloquear postulación a CLOSED:
     if (jobCheck.rows[0].status === "CLOSED") {
       return res
         .status(400)
@@ -120,7 +126,8 @@ exports.listApplicationsByJob = async (req, res) => {
          p.first_name,
          p.last_name,
          p.phone,
-         p.dni
+         p.document_type,
+         p.document_number
        FROM job_applications a
        JOIN users u ON u.id = a.candidate_id
        LEFT JOIN candidate_profiles p ON p.user_id = u.id

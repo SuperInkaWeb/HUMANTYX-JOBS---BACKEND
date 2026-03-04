@@ -6,6 +6,9 @@ function signToken(payload) {
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: "1d" });
 }
 
+/* =========================
+   REGISTER
+========================= */
 exports.register = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -28,6 +31,7 @@ exports.register = async (req, res) => {
 
     const user = userResult.rows[0];
 
+    // Crear perfil vacío
     await pool.query("INSERT INTO candidate_profiles (user_id) VALUES ($1)", [user.id]);
 
     const token = signToken({ id: user.id, role: user.role });
@@ -39,6 +43,9 @@ exports.register = async (req, res) => {
   }
 };
 
+/* =========================
+   LOGIN
+========================= */
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body || {};
@@ -68,17 +75,59 @@ exports.login = async (req, res) => {
   }
 };
 
-
+/* =========================
+   GET /auth/me
+========================= */
 exports.me = async (req, res) => {
   try {
     const userId = req.user.id;
 
     const result = await pool.query(
-      `SELECT u.id, u.email, u.role, u.created_at,
-              p.first_name, p.last_name, p.phone, p.dni, p.updated_at
-       FROM users u
-       LEFT JOIN candidate_profiles p ON p.user_id = u.id
-       WHERE u.id = $1`,
+      `
+      SELECT 
+        u.id,
+        u.email,
+        u.role,
+        u.created_at,
+
+        p.first_name,
+        p.last_name,
+        p.phone,
+
+        p.document_type,
+        p.document_number,
+
+        p.country,
+        p.department,
+        p.city,
+        p.birth_date,
+        p.gender,
+        p.marital_status,
+        p.headline,
+        p.about,
+        p.education_level,
+        p.experience_years,
+        p.availability,
+        p.profile_completed_at,
+        p.updated_at,
+
+        CASE
+          WHEN p.first_name IS NOT NULL
+           AND p.last_name IS NOT NULL
+           AND p.phone IS NOT NULL
+           AND p.document_type IS NOT NULL
+           AND p.document_number IS NOT NULL
+           AND p.country IS NOT NULL
+           AND p.department IS NOT NULL
+           AND p.city IS NOT NULL
+          THEN true
+          ELSE false
+        END AS profile_complete
+
+      FROM users u
+      LEFT JOIN candidate_profiles p ON p.user_id = u.id
+      WHERE u.id = $1
+      `,
       [userId]
     );
 
@@ -92,83 +141,124 @@ exports.me = async (req, res) => {
   }
 };
 
+/* =========================
+   PUT /auth/me/profile
+========================= */
 exports.updateMyProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { first_name, last_name, phone, dni } = req.body;
 
-    // 1) Traer perfil actual (para saber si first/last ya existen)
-    const currentRes = await pool.query(
-      `SELECT first_name, last_name, phone, dni
-       FROM candidate_profiles
-       WHERE user_id = $1`,
-      [userId]
-    );
+    const {
+      first_name,
+      last_name,
+      phone,
+      document_type,
+      document_number,
+      country,
+      department,
+      city,
+      birth_date,
+      gender,
+      marital_status,
+      headline,
+      about,
+      education_level,
+      experience_years,
+      availability,
+    } = req.body;
 
-    // Si por alguna razón no existe, lo creamos "vacío" primero
-    if (!currentRes.rows.length) {
-      await pool.query(`INSERT INTO candidate_profiles (user_id) VALUES ($1)`, [userId]);
-      currentRes.rows.push({ first_name: null, last_name: null, phone: null, dni: null });
-    }
-
-    const current = currentRes.rows[0];
-
-    // 2) Reglas:
-    // - Si first_name o last_name NO están aún en BD, entonces sí son obligatorios
-    const firstMissing = !current.first_name;
-    const lastMissing = !current.last_name;
-
-    if ((firstMissing && !first_name) || (lastMissing && !last_name)) {
-      return res.status(400).json({
-        message: "first_name y last_name son requeridos para completar el perfil por primera vez",
-      });
-    }
-
-    // 3) Si no envió ningún campo, no hacemos update
     const nothingToUpdate =
       first_name === undefined &&
       last_name === undefined &&
       phone === undefined &&
-      dni === undefined;
+      document_type === undefined &&
+      document_number === undefined &&
+      country === undefined &&
+      department === undefined &&
+      city === undefined &&
+      birth_date === undefined &&
+      gender === undefined &&
+      marital_status === undefined &&
+      headline === undefined &&
+      about === undefined &&
+      education_level === undefined &&
+      experience_years === undefined &&
+      availability === undefined;
 
-    if (nothingToUpdate) {
+    if (nothingToUpdate)
       return res.status(400).json({ message: "No hay campos para actualizar" });
-    }
 
-    // 4) Update parcial
     const result = await pool.query(
-      `UPDATE candidate_profiles
-       SET first_name = COALESCE($1, first_name),
-           last_name  = COALESCE($2, last_name),
-           phone      = COALESCE($3, phone),
-           dni        = COALESCE($4, dni),
-           updated_at = NOW()
-       WHERE user_id = $5
-       RETURNING user_id, first_name, last_name, phone, dni, updated_at`,
+      `
+      UPDATE candidate_profiles
+      SET first_name = COALESCE($1, first_name),
+          last_name = COALESCE($2, last_name),
+          phone = COALESCE($3, phone),
+
+          document_type = COALESCE($4, document_type),
+          document_number = COALESCE($5, document_number),
+
+          country = COALESCE($6, country),
+          department = COALESCE($7, department),
+          city = COALESCE($8, city),
+          birth_date = COALESCE($9, birth_date),
+          gender = COALESCE($10, gender),
+          marital_status = COALESCE($11, marital_status),
+          headline = COALESCE($12, headline),
+          about = COALESCE($13, about),
+          education_level = COALESCE($14, education_level),
+          experience_years = COALESCE($15, experience_years),
+          availability = COALESCE($16, availability),
+          updated_at = NOW()
+      WHERE user_id = $17
+      RETURNING *
+      `,
       [
-        first_name === undefined ? null : first_name,
-        last_name === undefined ? null : last_name,
-        phone === undefined ? null : phone,
-        dni === undefined ? null : dni,
+        first_name ?? null,
+        last_name ?? null,
+        phone ?? null,
+        document_type ?? null,
+        document_number ?? null,
+        country ?? null,
+        department ?? null,
+        city ?? null,
+        birth_date ?? null,
+        gender ?? null,
+        marital_status ?? null,
+        headline ?? null,
+        about ?? null,
+        education_level ?? null,
+        experience_years ?? null,
+        availability ?? null,
         userId,
       ]
     );
 
-    return res.json({ profile: result.rows[0] });
-  } catch (err) {
-    // 23505 = UNIQUE violation (por ejemplo DNI duplicado)
-    if (err.code === "23505") {
-      
-      if (err.constraint && err.constraint.toLowerCase().includes("dni")) {
-        return res.status(409).json({ message: "El DNI ya está registrado" });
-      }
-      return res.status(409).json({ message: "Dato duplicado" });
+    const profile = result.rows[0];
+
+    const isComplete =
+      profile.first_name &&
+      profile.last_name &&
+      profile.phone &&
+      profile.document_type &&
+      profile.document_number &&
+      profile.country &&
+      profile.department &&
+      profile.city;
+
+    if (isComplete && !profile.profile_completed_at) {
+      await pool.query(
+        `UPDATE candidate_profiles
+         SET profile_completed_at = NOW()
+         WHERE user_id = $1`,
+        [userId]
+      );
     }
 
+    return res.json({ profile });
+  } catch (err) {
+    // Si más adelante pones UNIQUE a document_number, aquí podrías capturar 23505 también
     console.error(err);
     return res.status(500).json({ message: "Error actualizando perfil" });
   }
 };
-
-
-

@@ -2,14 +2,30 @@ const router = require("express").Router();
 const requireAuth = require("../middlewares/requireAuth");
 const upload = require("../config/upload");
 const candidate = require("../controllers/candidate.controller");
+const requireCompleteProfile = require("../middlewares/requireCompleteProfile");
 
-// subir CV
-router.post("/files/cv",  requireAuth,  upload.single("cv"),   candidate.uploadCv);
+// CV
+router.post(
+  "/files/cv",
+  requireAuth,
+  requireCompleteProfile,
+  upload.single("cv"),
+  candidate.uploadCv
+);
 
-// obtener info del CV del usuario logueado
-router.get("/files/cv", requireAuth, candidate.getMyCvInfo);
+// 👇 también bloquear info y descarga
+router.get(
+  "/files/cv",
+  requireAuth,
+  requireCompleteProfile,
+  candidate.getMyCvInfo
+);
 
-router.get("/files/cv/download", requireAuth, candidate.downloadMyCv);//descargar cv
-
+router.get(
+  "/files/cv/download",
+  requireAuth,
+  requireCompleteProfile,
+  candidate.downloadMyCv
+);
 
 module.exports = router;

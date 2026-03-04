@@ -11,7 +11,7 @@ exports.uploadCv = async (req, res) => {
 
     const { originalname, filename, mimetype, size } = req.file;
 
-    // Si ya existe CV, lo reemplazamos (update). Si no, insert.
+    // Si ya existe CV,se reemplaza (update). Si no, insert.
     const upsert = await pool.query(
       `INSERT INTO candidate_files (user_id, doc_type, original_name, stored_name, mime_type, size_bytes)
        VALUES ($1, 'CV', $2, $3, $4, $5)
