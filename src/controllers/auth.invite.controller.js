@@ -88,3 +88,50 @@ exports.setPasswordFromInvite = async (req, res) => {
     conn.release();
   }
 };
+
+exports.validateInvite = async (req, res) => {
+  try {
+    const { token, email } = req.query;
+
+    if (!token || !email) {
+      return res.status(400).json({ message: "Token y email requeridos" });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+    const inv = await pool.query(
+      `
+      SELECT id, email, role, expires_at, used_at
+      FROM user_invites
+      WHERE token_hash = $1 AND email = $2
+      LIMIT 1
+      `,
+      [tokenHash, email.toLowerCase()]
+    );
+
+    if (!inv.rows.length) {
+      return res.status(404).json({ error: "TOKEN_INVALID" });
+    }
+
+    const invite = inv.rows[0];
+
+    if (invite.used_at) {
+      return res.status(409).json({ error: "INVITE_USED" });
+    }
+
+    if (new Date(invite.expires_at) < new Date()) {
+      return res.status(410).json({ error: "INVITE_EXPIRED" });
+    }
+
+    return res.json({
+      valid: true,
+      email: invite.email,
+      role: invite.role,
+      expires_at: invite.expires_at,
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Error validando invitación" });
+  }
+};
