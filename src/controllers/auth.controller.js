@@ -100,14 +100,23 @@ exports.me = async (req, res) => {
         p.country,
         p.department,
         p.city,
+        p.district,
+        p.address_line,
+        p.postal_code,
+
         p.birth_date,
         p.gender,
         p.marital_status,
+
         p.headline,
         p.about,
+        p.linkedin_url,
+        p.portfolio_url,
         p.education_level,
         p.experience_years,
+        p.desired_salary,
         p.availability,
+
         p.profile_completed_at,
         p.updated_at,
 
@@ -131,10 +140,58 @@ exports.me = async (req, res) => {
       [userId]
     );
 
-    if (!result.rows.length)
+    if (!result.rows.length) {
       return res.status(404).json({ message: "Usuario no encontrado" });
+    }
 
-    return res.json({ user: result.rows[0] });
+    const academicRes = await pool.query(
+      `
+      SELECT
+        id,
+        education_level,
+        institution,
+        career,
+        academic_status,
+        start_date,
+        end_date,
+        location,
+        total_years,
+        created_at,
+        updated_at
+      FROM candidate_academic_items
+      WHERE user_id = $1
+      ORDER BY created_at ASC
+      `,
+      [userId]
+    );
+
+    const workRes = await pool.query(
+      `
+      SELECT
+        id,
+        position,
+        company,
+        start_date,
+        end_date,
+        location,
+        total_years,
+        description,
+        created_at,
+        updated_at
+      FROM candidate_work_items
+      WHERE user_id = $1
+      ORDER BY created_at ASC
+      `,
+      [userId]
+    );
+
+    return res.json({
+      user: {
+        ...result.rows[0],
+        academic_items: academicRes.rows,
+        work_items: workRes.rows,
+      },
+    });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ message: "Error en /me" });
@@ -145,6 +202,8 @@ exports.me = async (req, res) => {
    PUT /auth/me/profile
 ========================= */
 exports.updateMyProfile = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const userId = req.user.id;
 
@@ -157,14 +216,22 @@ exports.updateMyProfile = async (req, res) => {
       country,
       department,
       city,
+      district,
+      address_line,
+      postal_code,
       birth_date,
       gender,
       marital_status,
       headline,
       about,
+      linkedin_url,
+      portfolio_url,
       education_level,
       experience_years,
+      desired_salary,
       availability,
+      academic_items,
+      work_items,
     } = req.body;
 
     const nothingToUpdate =
@@ -176,41 +243,56 @@ exports.updateMyProfile = async (req, res) => {
       country === undefined &&
       department === undefined &&
       city === undefined &&
+      district === undefined &&
+      address_line === undefined &&
+      postal_code === undefined &&
       birth_date === undefined &&
       gender === undefined &&
       marital_status === undefined &&
       headline === undefined &&
       about === undefined &&
+      linkedin_url === undefined &&
+      portfolio_url === undefined &&
       education_level === undefined &&
       experience_years === undefined &&
-      availability === undefined;
+      desired_salary === undefined &&
+      availability === undefined &&
+      academic_items === undefined &&
+      work_items === undefined;
 
-    if (nothingToUpdate)
+    if (nothingToUpdate) {
       return res.status(400).json({ message: "No hay campos para actualizar" });
+    }
 
-    const result = await pool.query(
+    await client.query("BEGIN");
+
+    const profileRes = await client.query(
       `
       UPDATE candidate_profiles
       SET first_name = COALESCE($1, first_name),
           last_name = COALESCE($2, last_name),
           phone = COALESCE($3, phone),
-
           document_type = COALESCE($4, document_type),
           document_number = COALESCE($5, document_number),
-
           country = COALESCE($6, country),
           department = COALESCE($7, department),
           city = COALESCE($8, city),
-          birth_date = COALESCE($9, birth_date),
-          gender = COALESCE($10, gender),
-          marital_status = COALESCE($11, marital_status),
-          headline = COALESCE($12, headline),
-          about = COALESCE($13, about),
-          education_level = COALESCE($14, education_level),
-          experience_years = COALESCE($15, experience_years),
-          availability = COALESCE($16, availability),
+          district = COALESCE($9, district),
+          address_line = COALESCE($10, address_line),
+          postal_code = COALESCE($11, postal_code),
+          birth_date = COALESCE($12, birth_date),
+          gender = COALESCE($13, gender),
+          marital_status = COALESCE($14, marital_status),
+          headline = COALESCE($15, headline),
+          about = COALESCE($16, about),
+          linkedin_url = COALESCE($17, linkedin_url),
+          portfolio_url = COALESCE($18, portfolio_url),
+          education_level = COALESCE($19, education_level),
+          experience_years = COALESCE($20, experience_years),
+          desired_salary = COALESCE($21, desired_salary),
+          availability = COALESCE($22, availability),
           updated_at = NOW()
-      WHERE user_id = $17
+      WHERE user_id = $23
       RETURNING *
       `,
       [
@@ -222,19 +304,99 @@ exports.updateMyProfile = async (req, res) => {
         country ?? null,
         department ?? null,
         city ?? null,
+        district ?? null,
+        address_line ?? null,
+        postal_code ?? null,
         birth_date ?? null,
         gender ?? null,
         marital_status ?? null,
         headline ?? null,
         about ?? null,
+        linkedin_url ?? null,
+        portfolio_url ?? null,
         education_level ?? null,
         experience_years ?? null,
+        desired_salary ?? null,
         availability ?? null,
         userId,
       ]
     );
 
-    const profile = result.rows[0];
+    if (academic_items !== undefined) {
+      await client.query(
+        `DELETE FROM candidate_academic_items WHERE user_id = $1`,
+        [userId]
+      );
+
+      for (const item of academic_items || []) {
+        await client.query(
+          `
+          INSERT INTO candidate_academic_items (
+            user_id,
+            education_level,
+            institution,
+            career,
+            academic_status,
+            start_date,
+            end_date,
+            location,
+            total_years,
+            updated_at
+          )
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+          `,
+          [
+            userId,
+            item.education_level ?? null,
+            item.institution ?? null,
+            item.career ?? null,
+            item.academic_status ?? null,
+            item.start_date ?? null,
+            item.end_date ?? null,
+            item.location ?? null,
+            item.total_years ?? null,
+          ]
+        );
+      }
+    }
+
+    if (work_items !== undefined) {
+      await client.query(
+        `DELETE FROM candidate_work_items WHERE user_id = $1`,
+        [userId]
+      );
+
+      for (const item of work_items || []) {
+        await client.query(
+          `
+          INSERT INTO candidate_work_items (
+            user_id,
+            position,
+            company,
+            start_date,
+            end_date,
+            location,
+            total_years,
+            description,
+            updated_at
+          )
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+          `,
+          [
+            userId,
+            item.position ?? null,
+            item.company ?? null,
+            item.start_date ?? null,
+            item.end_date ?? null,
+            item.location ?? null,
+            item.total_years ?? null,
+            item.description ?? null,
+          ]
+        );
+      }
+    }
+
+    const profile = profileRes.rows[0];
 
     const isComplete =
       profile.first_name &&
@@ -247,18 +409,71 @@ exports.updateMyProfile = async (req, res) => {
       profile.city;
 
     if (isComplete && !profile.profile_completed_at) {
-      await pool.query(
-        `UPDATE candidate_profiles
-         SET profile_completed_at = NOW()
-         WHERE user_id = $1`,
+      await client.query(
+        `
+        UPDATE candidate_profiles
+        SET profile_completed_at = NOW()
+        WHERE user_id = $1
+        `,
         [userId]
       );
     }
 
-    return res.json({ profile });
+    const academicRes = await client.query(
+      `
+      SELECT
+        id,
+        education_level,
+        institution,
+        career,
+        academic_status,
+        start_date,
+        end_date,
+        location,
+        total_years,
+        created_at,
+        updated_at
+      FROM candidate_academic_items
+      WHERE user_id = $1
+      ORDER BY created_at ASC
+      `,
+      [userId]
+    );
+
+    const workRes = await client.query(
+      `
+      SELECT
+        id,
+        position,
+        company,
+        start_date,
+        end_date,
+        location,
+        total_years,
+        description,
+        created_at,
+        updated_at
+      FROM candidate_work_items
+      WHERE user_id = $1
+      ORDER BY created_at ASC
+      `,
+      [userId]
+    );
+
+    await client.query("COMMIT");
+
+    return res.json({
+      profile: {
+        ...profile,
+        academic_items: academicRes.rows,
+        work_items: workRes.rows,
+      },
+    });
   } catch (err) {
-    // Si más adelante pones UNIQUE a document_number, aquí podrías capturar 23505 también
+    await client.query("ROLLBACK");
     console.error(err);
     return res.status(500).json({ message: "Error actualizando perfil" });
+  } finally {
+    client.release();
   }
 };

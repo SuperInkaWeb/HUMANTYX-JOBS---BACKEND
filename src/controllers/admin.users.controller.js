@@ -66,7 +66,7 @@ exports.inviteUser = async (req, res) => {
     return res.status(201).json({
       invite: ins.rows[0],
       mail_sent: mailSent,
-      invite_url: mailSent ? null : inviteUrl, // fallback si falla email
+      invite_url: inviteUrl, // fallback si falla email
       ...(process.env.NODE_ENV !== "production" && { token }), // solo en dev
 
     });

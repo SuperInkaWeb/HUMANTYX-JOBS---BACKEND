@@ -13,7 +13,7 @@ router.post(
   candidate.uploadCv
 );
 
-// 👇 también bloquear info y descarga
+// también bloquear info y descarga
 router.get(
   "/files/cv",
   requireAuth,

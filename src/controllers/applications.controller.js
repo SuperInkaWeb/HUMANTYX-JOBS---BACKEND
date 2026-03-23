@@ -173,6 +173,7 @@ exports.updateApplicationStatus = async (req, res) => {
     return res.json({ application: result.rows[0] });
   } catch (err) {
     console.error(err);
+  
     return res.status(500).json({ message: "Error actualizando estado" });
   }
 };
