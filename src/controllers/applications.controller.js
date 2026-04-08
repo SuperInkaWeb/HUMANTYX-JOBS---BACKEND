@@ -14,7 +14,6 @@ exports.applyToJob = async (req, res) => {
       return res.status(400).json({ message: "job_id es requerido" });
     }
 
-    // 1) Validar perfil completo (defensivo, aunque tengas middleware)
     const profileRes = await pool.query(
       `SELECT first_name, last_name, phone, document_type, document_number
        FROM candidate_profiles
@@ -40,7 +39,6 @@ exports.applyToJob = async (req, res) => {
       });
     }
 
-    // 2) validar que el job exista
     const jobCheck = await pool.query(
       `SELECT id, status FROM jobs WHERE id = $1 LIMIT 1`,
       [job_id]
@@ -50,11 +48,10 @@ exports.applyToJob = async (req, res) => {
       return res.status(404).json({ message: "Vacante no encontrada" });
     }
 
-    // bloquear postulación a CLOSED:
-    if (jobCheck.rows[0].status === "CLOSED") {
-      return res
-        .status(400)
-        .json({ message: "No se puede postular a una vacante cerrada" });
+    if (jobCheck.rows[0].status !== "PUBLISHED") {
+      return res.status(400).json({
+        message: "Solo se puede postular a vacantes publicadas",
+      });
     }
 
     const result = await pool.query(
@@ -66,10 +63,10 @@ exports.applyToJob = async (req, res) => {
 
     return res.status(201).json({ application: result.rows[0] });
   } catch (err) {
-    // UNIQUE (job_id, candidate_id) => evita doble postulación
     if (err.code === "23505") {
       return res.status(409).json({ message: "Ya postulaste a esta vacante" });
     }
+
     console.error(err);
     return res.status(500).json({ message: "Error postulando a la vacante" });
   }
@@ -84,22 +81,58 @@ exports.listMyApplications = async (req, res) => {
     const candidateId = req.user.id;
 
     const result = await pool.query(
-      `SELECT
-         a.id,
-         a.status,
-         a.created_at,
-         j.id AS job_id,
-         j.title,
-         j.location,
-         j.employment_type,
-         j.salary_range,
-         j.status AS job_status
-       FROM job_applications a
-       JOIN jobs j ON j.id = a.job_id
-       WHERE a.candidate_id = $1
-       ORDER BY a.created_at DESC`,
-      [candidateId]
-    );
+  `
+  SELECT
+    a.id,
+    a.status,
+    a.created_at,
+    j.id AS job_id,
+    j.title,
+    j.location,
+    j.employment_type,
+    j.salary_range,
+    j.status AS job_status,
+
+    EXISTS (
+      SELECT 1
+      FROM application_conversations c
+      WHERE c.application_id = a.id
+    ) AS has_conversation,
+
+    COALESCE((
+      SELECT COUNT(m.id)
+      FROM application_conversations c
+      JOIN application_messages m
+        ON m.conversation_id = c.id
+      WHERE c.application_id = a.id
+    ), 0) AS messages_count,
+
+    COALESCE((
+      SELECT COUNT(m.id)
+      FROM application_conversations c
+      JOIN application_messages m
+        ON m.conversation_id = c.id
+      WHERE c.application_id = a.id
+        AND m.sender_role IN ('ADMIN', 'RRHH')
+        AND m.read_by_candidate_at IS NULL
+    ), 0) AS unread_messages_count,
+
+    (
+      SELECT MAX(m.created_at)
+      FROM application_conversations c
+      JOIN application_messages m
+        ON m.conversation_id = c.id
+      WHERE c.application_id = a.id
+    ) AS last_message_at
+
+  FROM job_applications a
+  JOIN jobs j
+    ON j.id = a.job_id
+  WHERE a.candidate_id = $1
+  ORDER BY a.created_at DESC
+  `,
+  [candidateId]
+);
 
     return res.json({ applications: result.rows });
   } catch (err) {
@@ -117,24 +150,61 @@ exports.listApplicationsByJob = async (req, res) => {
     const { id: jobId } = req.params;
 
     const result = await pool.query(
-      `SELECT
-         a.id AS application_id,
-         a.status AS application_status,
-         a.created_at AS applied_at,
-         u.id AS candidate_id,
-         u.email,
-         p.first_name,
-         p.last_name,
-         p.phone,
-         p.document_type,
-         p.document_number
-       FROM job_applications a
-       JOIN users u ON u.id = a.candidate_id
-       LEFT JOIN candidate_profiles p ON p.user_id = u.id
-       WHERE a.job_id = $1
-       ORDER BY a.created_at DESC`,
-      [jobId]
-    );
+  `
+  SELECT
+    a.id AS application_id,
+    a.status AS application_status,
+    a.created_at AS applied_at,
+    u.id AS candidate_id,
+    u.email,
+    p.first_name,
+    p.last_name,
+    p.phone,
+    p.document_type,
+    p.document_number,
+
+    EXISTS (
+      SELECT 1
+      FROM application_conversations c
+      WHERE c.application_id = a.id
+    ) AS has_conversation,
+
+    COALESCE((
+      SELECT COUNT(m.id)
+      FROM application_conversations c
+      JOIN application_messages m
+        ON m.conversation_id = c.id
+      WHERE c.application_id = a.id
+    ), 0) AS messages_count,
+
+    COALESCE((
+      SELECT COUNT(m.id)
+      FROM application_conversations c
+      JOIN application_messages m
+        ON m.conversation_id = c.id
+      WHERE c.application_id = a.id
+        AND m.sender_role = 'CANDIDATE'
+        AND m.read_by_staff_at IS NULL
+    ), 0) AS unread_messages_count,
+
+    (
+      SELECT MAX(m.created_at)
+      FROM application_conversations c
+      JOIN application_messages m
+        ON m.conversation_id = c.id
+      WHERE c.application_id = a.id
+    ) AS last_message_at
+
+  FROM job_applications a
+  JOIN users u
+    ON u.id = a.candidate_id
+  LEFT JOIN candidate_profiles p
+    ON p.user_id = u.id
+  WHERE a.job_id = $1
+  ORDER BY a.created_at DESC
+  `,
+  [jobId]
+);
 
     return res.json({ applications: result.rows });
   } catch (err) {
@@ -154,6 +224,7 @@ exports.updateApplicationStatus = async (req, res) => {
     const { status } = req.body;
 
     const allowed = ["APPLIED", "IN_REVIEW", "INTERVIEW", "REJECTED", "HIRED"];
+
     if (!status || !allowed.includes(status)) {
       return res.status(400).json({ message: "status inválido" });
     }
@@ -173,7 +244,6 @@ exports.updateApplicationStatus = async (req, res) => {
     return res.json({ application: result.rows[0] });
   } catch (err) {
     console.error(err);
-  
     return res.status(500).json({ message: "Error actualizando estado" });
   }
 };

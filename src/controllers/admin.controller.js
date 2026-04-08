@@ -1,7 +1,6 @@
 const pool = require("../db");
 const path = require("path");
 
-
 exports.listCandidates = async (req, res) => {
   try {
     const result = await pool.query(
@@ -28,7 +27,6 @@ exports.listCandidates = async (req, res) => {
     return res.status(500).json({ message: "Error listando candidatos" });
   }
 };
-
 
 exports.getCandidateById = async (req, res) => {
   try {
@@ -111,11 +109,34 @@ exports.getCandidateById = async (req, res) => {
       [id]
     );
 
+    const cvRes = await pool.query(
+      `
+      SELECT
+        stored_name,
+        original_name,
+        mime_type,
+        size_bytes,
+        created_at
+      FROM candidate_files
+      WHERE user_id = $1 AND doc_type = 'CV'
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    const cv = cvRes.rows[0] || null;
+
     return res.json({
       candidate: {
         ...result.rows[0],
         academic_items: academicRes.rows,
         work_items: workRes.rows,
+        has_cv: !!cv,
+        cv_original_name: cv?.original_name || null,
+        cv_stored_name: cv?.stored_name || null,
+        cv_mime_type: cv?.mime_type || null,
+        cv_size_bytes: cv?.size_bytes || null,
+        cv_uploaded_at: cv?.created_at || null,
       },
     });
   } catch (err) {
@@ -143,9 +164,11 @@ exports.getCandidateCv = async (req, res) => {
     const cv = result.rows[0];
     const filePath = path.join(process.cwd(), "uploads", cv.stored_name);
 
-    
     res.setHeader("Content-Type", cv.mime_type);
-    res.setHeader("Content-Disposition", `attachment; filename="${cv.original_name}"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${cv.original_name}"`
+    );
 
     return res.sendFile(filePath);
   } catch (err) {
@@ -154,3 +177,61 @@ exports.getCandidateCv = async (req, res) => {
   }
 };
 
+/////////////////////////////////////////////
+// NUEVO: PREVIEW CV (SPRINT 10)
+/////////////////////////////////////////////
+
+exports.previewCandidateCv = async (req, res) => {
+  try {
+    const { jobId, candidateId } = req.params;
+
+    // 1. Validar que el candidato postuló a la vacante
+    const application = await pool.query(
+      `
+      SELECT 1
+      FROM job_applications
+      WHERE job_id = $1 AND candidate_id = $2
+      `,
+      [jobId, candidateId]
+    );
+
+    if (!application.rows.length) {
+      return res.status(403).json({
+        message: "El candidato no pertenece a esta vacante",
+      });
+    }
+
+    // 2. Obtener CV
+    const result = await pool.query(
+      `SELECT stored_name, original_name, mime_type
+       FROM candidate_files
+       WHERE user_id = $1 AND doc_type = 'CV'
+       LIMIT 1`,
+      [candidateId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({
+        message: "El candidato no tiene CV",
+      });
+    }
+
+    const cv = result.rows[0];
+    const filePath = path.join(process.cwd(), "uploads", cv.stored_name);
+
+    // 3. HEADERS PARA PREVIEW
+    res.setHeader("Content-Type", cv.mime_type);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${cv.original_name}"`
+    );
+
+    // 4. MOSTRAR EN NAVEGADOR
+    return res.sendFile(filePath);
+  } catch (err) {
+    console.error("Error preview CV:", err);
+    return res.status(500).json({
+      message: "Error al previsualizar CV",
+    });
+  }
+};

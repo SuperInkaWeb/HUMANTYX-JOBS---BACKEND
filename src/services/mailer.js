@@ -3,7 +3,15 @@ const { Resend } = require("resend");
 const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function sendInviteEmail(to, inviteUrl, role) {
-  await resend.emails.send({
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY no está configurada");
+  }
+
+  if (!process.env.MAIL_FROM) {
+    throw new Error("MAIL_FROM no está configurado");
+  }
+
+  const result = await resend.emails.send({
     from: process.env.MAIL_FROM,
     to: [to],
     subject: "Invitación a Humantyx Jobs",
@@ -19,6 +27,14 @@ async function sendInviteEmail(to, inviteUrl, role) {
       <p>Este enlace expira en 48 horas.</p>
     `,
   });
+
+  console.log("Respuesta de Resend:", result);
+
+  if (result?.error) {
+    throw new Error(result.error.message || "Resend devolvió un error");
+  }
+
+  return result;
 }
 
 module.exports = { sendInviteEmail };

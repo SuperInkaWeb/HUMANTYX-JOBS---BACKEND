@@ -10,7 +10,7 @@ router.post(
   requireAuth,
   requireRole("CANDIDATE"),
   requireCompleteProfile,
-  applications.applyToJob
+  applications.applyToJob 
 );
 
 router.get(

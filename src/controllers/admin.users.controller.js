@@ -53,19 +53,23 @@ exports.inviteUser = async (req, res) => {
 
     // Si ya tienes servicio de correo, aquí lo llamas (opcional)
     let mailSent = false;
+    let mailError = null;
 
     try {
-      await sendInviteEmail(cleanEmail, inviteUrl, cleanRole);
+      const mailResult = await sendInviteEmail(cleanEmail, inviteUrl, cleanRole);
+      console.log("Resultado final del envío:", mailResult);
       mailSent = true;
     } catch (mailErr) {
       console.error("Error enviando email:", mailErr);
       mailSent = false;
-    }
+      mailError = mailErr.message || "No se pudo enviar el correo";
+}
     // await sendInviteEmail(cleanEmail, inviteUrl)
 
     return res.status(201).json({
       invite: ins.rows[0],
       mail_sent: mailSent,
+      mail_error: mailError,
       invite_url: inviteUrl, // fallback si falla email
       ...(process.env.NODE_ENV !== "production" && { token }), // solo en dev
 
