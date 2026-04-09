@@ -122,13 +122,16 @@ exports.me = async (req, res) => {
 
         CASE
           WHEN p.first_name IS NOT NULL
-           AND p.last_name IS NOT NULL
-           AND p.phone IS NOT NULL
-           AND p.document_type IS NOT NULL
-           AND p.document_number IS NOT NULL
-           AND p.country IS NOT NULL
-           AND p.department IS NOT NULL
-           AND p.city IS NOT NULL
+          AND p.last_name IS NOT NULL
+          AND p.phone IS NOT NULL
+          AND p.document_type IS NOT NULL
+          AND p.document_number IS NOT NULL
+          AND p.country IS NOT NULL
+          AND p.department IS NOT NULL
+          AND p.city IS NOT NULL
+          AND p.birth_date IS NOT NULL
+          AND p.gender IS NOT NULL
+          AND p.marital_status IS NOT NULL
           THEN true
           ELSE false
         END AS profile_complete
@@ -406,7 +409,10 @@ exports.updateMyProfile = async (req, res) => {
       profile.document_number &&
       profile.country &&
       profile.department &&
-      profile.city;
+      profile.city &&
+      profile.birth_date &&
+      profile.gender &&
+      profile.marital_status;
 
     if (isComplete && !profile.profile_completed_at) {
       await client.query(

@@ -13,20 +13,23 @@ module.exports = async function requireCompleteProfile(req, res, next) {
 
     const r = await pool.query(
       `
-      SELECT
-        CASE
-          WHEN first_name IS NOT NULL
-           AND last_name IS NOT NULL
-           AND phone IS NOT NULL
-           AND document_type IS NOT NULL
-           AND document_number IS NOT NULL
-           AND country IS NOT NULL
-           AND department IS NOT NULL
-           AND city IS NOT NULL
-          THEN true ELSE false
-        END AS profile_complete
-      FROM candidate_profiles
-      WHERE user_id = $1
+        SELECT
+            CASE
+              WHEN first_name IS NOT NULL
+              AND last_name IS NOT NULL
+              AND phone IS NOT NULL
+              AND document_type IS NOT NULL
+              AND document_number IS NOT NULL
+              AND country IS NOT NULL
+              AND department IS NOT NULL
+              AND city IS NOT NULL
+              AND birth_date IS NOT NULL
+              AND gender IS NOT NULL
+              AND marital_status IS NOT NULL
+              THEN true ELSE false
+            END AS profile_complete
+          FROM candidate_profiles
+          WHERE user_id = $1
       `,
       [userId]
     );
