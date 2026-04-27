@@ -37,4 +37,40 @@ async function sendInviteEmail(to, inviteUrl, role) {
   return result;
 }
 
-module.exports = { sendInviteEmail };
+async function sendPasswordResetEmail(to, resetUrl) {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error("RESEND_API_KEY no está configurada");
+  }
+
+  if (!process.env.MAIL_FROM) {
+    throw new Error("MAIL_FROM no está configurado");
+  }
+
+  const result = await resend.emails.send({
+    from: process.env.MAIL_FROM,
+    to: [to],
+    subject: "Recuperación de contraseña - Humantyx Jobs",
+    html: `
+      <h2>Recuperación de contraseña</h2>
+      <p>Recibimos una solicitud para restablecer tu contraseña.</p>
+
+      <a href="${resetUrl}"
+         style="background:#2563eb;color:white;padding:10px 20px;text-decoration:none;border-radius:6px;">
+         Restablecer contraseña
+      </a>
+
+      <p>Este enlace expira en 15 minutos.</p>
+      <p>Si no solicitaste este cambio, puedes ignorar este correo.</p>
+    `,
+  });
+
+  console.log("Respuesta de Resend (reset):", result);
+
+  if (result?.error) {
+    throw new Error(result.error.message || "Resend devolvió un error");
+  }
+
+  return result;
+}
+
+module.exports = { sendInviteEmail, sendPasswordResetEmail };

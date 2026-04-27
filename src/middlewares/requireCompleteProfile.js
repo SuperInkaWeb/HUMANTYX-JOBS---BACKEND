@@ -2,43 +2,50 @@ const pool = require("../db");
 
 module.exports = async function requireCompleteProfile(req, res, next) {
   try {
-    const userId = req.user?.id;
-    const role = req.user?.role;
-    console.log("Middleware ejecutado");
-    console.log("Middleware ejecutado en:", req.method, req.originalUrl);
-    if (!userId) return res.status(401).json({ message: "No autenticado" });
+    if (!req.user || req.user.role !== "CANDIDATE") {
+      return next();
+    }
 
-    // Solo aplica a candidatos
-    if (role !== "CANDIDATE") return next();
-
-    const r = await pool.query(
+    const result = await pool.query(
       `
-        SELECT
-            CASE
-              WHEN first_name IS NOT NULL
-              AND last_name IS NOT NULL
-              AND phone IS NOT NULL
-              AND document_type IS NOT NULL
-              AND document_number IS NOT NULL
-              AND country IS NOT NULL
-              AND department IS NOT NULL
-              AND city IS NOT NULL
-              AND birth_date IS NOT NULL
-              AND gender IS NOT NULL
-              AND marital_status IS NOT NULL
-              THEN true ELSE false
-            END AS profile_complete
-          FROM candidate_profiles
-          WHERE user_id = $1
+      SELECT
+        up.first_name,
+        up.last_name,
+        up.phone,
+        up.document_type,
+        up.document_number,
+        up.country,
+        up.department,
+        up.city,
+        up.birth_date,
+        up.gender,
+        up.marital_status
+      FROM user_profiles up
+      WHERE up.user_id = $1
+      LIMIT 1
       `,
-      [userId]
+      [req.user.id]
     );
 
-    const complete = r.rows[0]?.profile_complete === true;
+    const profile = result.rows[0];
 
-    if (!complete) {
+    const isComplete = !!(
+      profile?.first_name &&
+      profile?.last_name &&
+      profile?.phone &&
+      profile?.document_type &&
+      profile?.document_number &&
+      profile?.country &&
+      profile?.department &&
+      profile?.city &&
+      profile?.birth_date &&
+      profile?.gender &&
+      profile?.marital_status
+    );
+
+    if (!isComplete) {
       return res.status(403).json({
-        message: "Completa tu perfil antes de continuar",
+        message: "Debes completar tu perfil antes de postular.",
         code: "PROFILE_INCOMPLETE",
       });
     }
@@ -46,6 +53,8 @@ module.exports = async function requireCompleteProfile(req, res, next) {
     return next();
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Error validando perfil" });
+    return res.status(500).json({
+      message: "Error validando perfil completo",
+    });
   }
 };

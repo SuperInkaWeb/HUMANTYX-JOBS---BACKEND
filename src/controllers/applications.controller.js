@@ -1,11 +1,59 @@
 const pool = require("../db");
 
-/**
- * POST /candidate/applications
- * Body: { job_id }
- * CANDIDATE se postula a una vacante
- */
+const allowedStatuses = new Set([
+  "APPLIED",
+  "IN_REVIEW",
+  "INTERVIEW",
+  "REJECTED",
+  "HIRED",
+]);
+
+function getStatusLabel(status) {
+  const map = {
+    APPLIED: "Postuló",
+    IN_REVIEW: "En revisión",
+    INTERVIEW: "Entrevista",
+    REJECTED: "No seleccionado",
+    HIRED: "Contratado",
+  };
+
+  return map[status] || status;
+}
+
+async function createNotification(
+  client,
+  {
+    userId,
+    type,
+    title,
+    message,
+    link = null,
+    applicationId = null,
+    jobId = null,
+  }
+) {
+  if (!userId) return;
+
+  await client.query(
+    `
+    INSERT INTO notifications (
+      user_id,
+      type,
+      title,
+      message,
+      link,
+      application_id,
+      job_id
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `,
+    [userId, type, title, message, link, applicationId, jobId]
+  );
+}
+
 exports.applyToJob = async (req, res) => {
+  const client = await pool.connect();
+
   try {
     const candidateId = req.user.id;
     const { job_id } = req.body || {};
@@ -14,125 +62,142 @@ exports.applyToJob = async (req, res) => {
       return res.status(400).json({ message: "job_id es requerido" });
     }
 
-    const profileRes = await pool.query(
-      `SELECT first_name, last_name, phone, document_type, document_number
-       FROM candidate_profiles
-       WHERE user_id = $1`,
-      [candidateId]
-    );
+    await client.query("BEGIN");
 
-    const p = profileRes.rows[0];
-
-    const incomplete =
-      !p ||
-      !p.first_name ||
-      !p.last_name ||
-      !p.phone ||
-      !p.document_type ||
-      !p.document_number;
-
-    if (incomplete) {
-      return res.status(403).json({
-        message:
-          "Perfil incompleto. Completa nombres, apellidos, teléfono y tu documento (tipo y número) antes de postular.",
-        code: "PROFILE_INCOMPLETE",
-      });
-    }
-
-    const jobCheck = await pool.query(
-      `SELECT id, status FROM jobs WHERE id = $1 LIMIT 1`,
+    const jobResult = await client.query(
+      `
+      SELECT id, title, status, created_by
+      FROM jobs
+      WHERE id = $1
+      LIMIT 1
+      `,
       [job_id]
     );
 
-    if (!jobCheck.rows.length) {
+    if (!jobResult.rows.length) {
+      await client.query("ROLLBACK");
       return res.status(404).json({ message: "Vacante no encontrada" });
     }
 
-    if (jobCheck.rows[0].status !== "PUBLISHED") {
-      return res.status(400).json({
-        message: "Solo se puede postular a vacantes publicadas",
+    const job = jobResult.rows[0];
+
+    if (job.status !== "PUBLISHED") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        message: "Solo puedes postular a vacantes publicadas.",
       });
     }
 
-    const result = await pool.query(
-      `INSERT INTO job_applications (job_id, candidate_id)
-       VALUES ($1, $2)
-       RETURNING id, job_id, candidate_id, status, created_at`,
+    const duplicate = await client.query(
+      `
+      SELECT id
+      FROM job_applications
+      WHERE job_id = $1
+        AND candidate_id = $2
+      LIMIT 1
+      `,
       [job_id, candidateId]
     );
 
-    return res.status(201).json({ application: result.rows[0] });
-  } catch (err) {
-    if (err.code === "23505") {
-      return res.status(409).json({ message: "Ya postulaste a esta vacante" });
+    if (duplicate.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        message: "Ya te has postulado a esta vacante.",
+      });
     }
 
+    const result = await client.query(
+      `
+      INSERT INTO job_applications (job_id, candidate_id)
+      VALUES ($1, $2)
+      RETURNING *
+      `,
+      [job_id, candidateId]
+    );
+
+    const application = result.rows[0];
+
+    if (job.created_by && job.created_by !== candidateId) {
+      await createNotification(client, {
+        userId: job.created_by,
+        type: "NEW_APPLICATION",
+        title: "Nueva postulación recibida",
+        message: `La vacante ${job.title} recibió una nueva postulación.`,
+        link: `/rrhh/vacantes/${job.id}/postulantes`,
+        applicationId: application.id,
+        jobId: job.id,
+      });
+    }
+
+    await client.query("COMMIT");
+
+    return res.status(201).json({
+      application,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
     console.error(err);
-    return res.status(500).json({ message: "Error postulando a la vacante" });
+    return res.status(500).json({ message: "Error al postular a la vacante" });
+  } finally {
+    client.release();
   }
 };
 
-/**
- * GET /candidate/applications
- * Lista postulaciones del candidato logueado
- */
 exports.listMyApplications = async (req, res) => {
   try {
     const candidateId = req.user.id;
 
     const result = await pool.query(
-  `
-  SELECT
-    a.id,
-    a.status,
-    a.created_at,
-    j.id AS job_id,
-    j.title,
-    j.location,
-    j.employment_type,
-    j.salary_range,
-    j.status AS job_status,
+      `
+      SELECT
+        a.id,
+        a.job_id,
+        a.candidate_id,
+        a.status,
+        a.created_at,
 
-    EXISTS (
-      SELECT 1
-      FROM application_conversations c
-      WHERE c.application_id = a.id
-    ) AS has_conversation,
+        j.title,
+        j.location,
+        j.employment_type,
+        j.salary_range,
+        j.description,
+        j.status AS job_status,
+        j.created_at AS job_created_at,
+        j.updated_at AS job_updated_at,
+        j.published_at,
 
-    COALESCE((
-      SELECT COUNT(m.id)
-      FROM application_conversations c
-      JOIN application_messages m
-        ON m.conversation_id = c.id
-      WHERE c.application_id = a.id
-    ), 0) AS messages_count,
+        u.email AS creator_email,
+        u.role AS creator_role,
+        up.first_name AS creator_first_name,
+        up.last_name AS creator_last_name,
 
-    COALESCE((
-      SELECT COUNT(m.id)
-      FROM application_conversations c
-      JOIN application_messages m
-        ON m.conversation_id = c.id
-      WHERE c.application_id = a.id
-        AND m.sender_role IN ('ADMIN', 'RRHH')
-        AND m.read_by_candidate_at IS NULL
-    ), 0) AS unread_messages_count,
+        EXISTS (
+          SELECT 1
+          FROM application_conversations ac
+          WHERE ac.application_id = a.id
+        ) AS has_conversation,
 
-    (
-      SELECT MAX(m.created_at)
-      FROM application_conversations c
-      JOIN application_messages m
-        ON m.conversation_id = c.id
-      WHERE c.application_id = a.id
-    ) AS last_message_at
-
-  FROM job_applications a
-  JOIN jobs j
-    ON j.id = a.job_id
-  WHERE a.candidate_id = $1
-  ORDER BY a.created_at DESC
-  `,
-  [candidateId]
-);
+        COALESCE((
+          SELECT COUNT(*)::int
+          FROM application_messages am
+          JOIN application_conversations ac
+            ON ac.id = am.conversation_id
+          WHERE ac.application_id = a.id
+            AND am.sender_role IN ('ADMIN', 'RRHH')
+            AND am.read_by_candidate_at IS NULL
+        ), 0) AS unread_messages_count
+      FROM job_applications a
+      JOIN jobs j
+        ON j.id = a.job_id
+      LEFT JOIN users u
+        ON u.id = j.created_by
+      LEFT JOIN user_profiles up
+        ON up.user_id = u.id
+      WHERE a.candidate_id = $1
+      ORDER BY a.created_at DESC
+      `,
+      [candidateId]
+    );
 
     return res.json({ applications: result.rows });
   } catch (err) {
@@ -141,70 +206,65 @@ exports.listMyApplications = async (req, res) => {
   }
 };
 
-/**
- * GET /admin/jobs/:id/applications
- * ADMIN/RRHH ven postulantes de una vacante
- */
 exports.listApplicationsByJob = async (req, res) => {
   try {
-    const { id: jobId } = req.params;
+    const jobId = req.params.id;
 
     const result = await pool.query(
-  `
-  SELECT
-    a.id AS application_id,
-    a.status AS application_status,
-    a.created_at AS applied_at,
-    u.id AS candidate_id,
-    u.email,
-    p.first_name,
-    p.last_name,
-    p.phone,
-    p.document_type,
-    p.document_number,
+      `
+      SELECT
+        a.id AS application_id,
+        a.job_id,
+        a.candidate_id,
+        a.status AS application_status,
+        a.created_at AS application_created_at,
 
-    EXISTS (
-      SELECT 1
-      FROM application_conversations c
-      WHERE c.application_id = a.id
-    ) AS has_conversation,
+        up.first_name,
+        up.last_name,
+        up.phone,
+        up.document_type,
+        up.document_number,
+        up.country,
+        up.department,
+        up.city,
 
-    COALESCE((
-      SELECT COUNT(m.id)
-      FROM application_conversations c
-      JOIN application_messages m
-        ON m.conversation_id = c.id
-      WHERE c.application_id = a.id
-    ), 0) AS messages_count,
+        cp.headline,
+        cp.about,
+        cp.linkedin_url,
+        cp.portfolio_url,
+        cp.education_level,
+        cp.experience_years,
+        cp.desired_salary,
+        cp.availability,
+        cp.profile_completed_at,
 
-    COALESCE((
-      SELECT COUNT(m.id)
-      FROM application_conversations c
-      JOIN application_messages m
-        ON m.conversation_id = c.id
-      WHERE c.application_id = a.id
-        AND m.sender_role = 'CANDIDATE'
-        AND m.read_by_staff_at IS NULL
-    ), 0) AS unread_messages_count,
-
-    (
-      SELECT MAX(m.created_at)
-      FROM application_conversations c
-      JOIN application_messages m
-        ON m.conversation_id = c.id
-      WHERE c.application_id = a.id
-    ) AS last_message_at
-
-  FROM job_applications a
-  JOIN users u
-    ON u.id = a.candidate_id
-  LEFT JOIN candidate_profiles p
-    ON p.user_id = u.id
-  WHERE a.job_id = $1
-  ORDER BY a.created_at DESC
-  `,
-  [jobId]
-);
+        u.email,
+        EXISTS (
+          SELECT 1
+          FROM application_conversations ac
+          WHERE ac.application_id = a.id
+        ) AS has_conversation,
+        COALESCE((
+          SELECT COUNT(*)::int
+          FROM application_messages am
+          JOIN application_conversations ac
+            ON ac.id = am.conversation_id
+          WHERE ac.application_id = a.id
+            AND am.sender_role = 'CANDIDATE'
+            AND am.read_by_staff_at IS NULL
+        ), 0) AS unread_messages_count
+      FROM job_applications a
+      JOIN users u
+        ON u.id = a.candidate_id
+      LEFT JOIN user_profiles up
+        ON up.user_id = u.id
+      LEFT JOIN candidate_profiles cp
+        ON cp.user_id = u.id
+      WHERE a.job_id = $1
+      ORDER BY a.created_at DESC
+      `,
+      [jobId]
+    );
 
     return res.json({ applications: result.rows });
   } catch (err) {
@@ -213,37 +273,78 @@ exports.listApplicationsByJob = async (req, res) => {
   }
 };
 
-/**
- * PATCH /admin/applications/:id/status
- * Body: { status }
- * ADMIN/RRHH cambian estado de postulación
- */
 exports.updateApplicationStatus = async (req, res) => {
+  const client = await pool.connect();
+
   try {
-    const { id: applicationId } = req.params;
-    const { status } = req.body;
+    const applicationId = req.params.id;
+    const { status } = req.body || {};
 
-    const allowed = ["APPLIED", "IN_REVIEW", "INTERVIEW", "REJECTED", "HIRED"];
-
-    if (!status || !allowed.includes(status)) {
-      return res.status(400).json({ message: "status inválido" });
+    if (!status || !allowedStatuses.has(status)) {
+      return res.status(400).json({ message: "Estado de postulación inválido" });
     }
 
-    const result = await pool.query(
-      `UPDATE job_applications
-       SET status = $1::application_status
-       WHERE id = $2
-       RETURNING id, job_id, candidate_id, status, created_at`,
+    await client.query("BEGIN");
+
+    const beforeResult = await client.query(
+      `
+      SELECT
+        a.id,
+        a.status AS current_status,
+        a.candidate_id,
+        a.job_id,
+        j.title AS job_title
+      FROM job_applications a
+      JOIN jobs j
+        ON j.id = a.job_id
+      WHERE a.id = $1
+      LIMIT 1
+      `,
+      [applicationId]
+    );
+
+    if (!beforeResult.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "Postulación no encontrada" });
+    }
+
+    const current = beforeResult.rows[0];
+
+    const result = await client.query(
+      `
+      UPDATE job_applications
+      SET status = $1
+      WHERE id = $2
+      RETURNING *
+      `,
       [status, applicationId]
     );
 
     if (!result.rows.length) {
+      await client.query("ROLLBACK");
       return res.status(404).json({ message: "Postulación no encontrada" });
     }
 
+    if (current.current_status !== status) {
+      await createNotification(client, {
+        userId: current.candidate_id,
+        type: "APPLICATION_STATUS_CHANGED",
+        title: "Estado de postulación actualizado",
+        message: `Tu postulación a ${current.job_title} cambió a ${getStatusLabel(status)}.`,
+        link: `/mis-postulaciones`,
+        applicationId,
+        jobId: current.job_id,
+      });
+    }
+
+    await client.query("COMMIT");
+
     return res.json({ application: result.rows[0] });
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error(err);
-    return res.status(500).json({ message: "Error actualizando estado" });
+    return res.status(500).json({ message: "Error actualizando estado de postulación" });
+  } finally {
+    client.release();
   }
 };

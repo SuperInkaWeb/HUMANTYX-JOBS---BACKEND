@@ -10,5 +10,11 @@ router.get("/me", requireAuth, auth.me);//obtener token
 router.put("/me/profile", requireAuth, auth.updateMyProfile);//actualizar perfil
 router.post("/set-password", inviteAuth.setPasswordFromInvite);
 router.get("/invites/validate", inviteAuth.validateInvite);
+router.patch("/change-password", requireAuth, auth.changePassword);
+
+
+router.post("/forgot-password", auth.forgotPassword);
+router.post("/reset-password", auth.resetPassword);
+router.get("/reset-password/validate", auth.validateResetPasswordToken);
 
 module.exports = router;

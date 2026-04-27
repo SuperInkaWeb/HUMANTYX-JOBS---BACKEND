@@ -60,6 +60,8 @@ exports.createJob = async (req, res) => {
       });
     }
 
+    const publishedAt = data.status === "PUBLISHED" ? new Date() : null;
+
     const result = await pool.query(
       `INSERT INTO jobs (
          title,
@@ -68,9 +70,10 @@ exports.createJob = async (req, res) => {
          employment_type,
          salary_range,
          status,
-         created_by
+         created_by,
+         published_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6::job_status, $7)
+       VALUES ($1, $2, $3, $4, $5, $6::job_status, $7, $8)
        RETURNING *`,
       [
         data.title,
@@ -80,6 +83,7 @@ exports.createJob = async (req, res) => {
         data.salary_range,
         data.status,
         userId,
+        publishedAt,
       ]
     );
 
@@ -94,7 +98,7 @@ exports.listJobsAdmin = async (req, res) => {
   try {
     const { status } = req.query;
     const params = [];
-    let where = "";
+    const whereParts = [];
 
     if (status) {
       if (!allowedStatus.has(status)) {
@@ -102,25 +106,45 @@ exports.listJobsAdmin = async (req, res) => {
       }
 
       params.push(status);
-      where = `WHERE j.status = $${params.length}`;
+      whereParts.push(`j.status = $${params.length}`);
     }
 
+    if (req.user?.role === "RRHH") {
+      params.push(req.user.id);
+      whereParts.push(`j.created_by = $${params.length}`);
+    }
+
+    const where = whereParts.length
+      ? `WHERE ${whereParts.join(" AND ")}`
+      : "";
+
     const result = await pool.query(
-      `SELECT
-         j.*,
-         COALESCE(app_counts.applicants_count, 0)::int AS applicants_count
-       FROM jobs j
-       LEFT JOIN (
-         SELECT
-           job_id,
-           COUNT(*)::int AS applicants_count
-         FROM job_applications
-         GROUP BY job_id
-       ) app_counts
-         ON app_counts.job_id = j.id
-       ${where}
-       ORDER BY j.created_at DESC
-       LIMIT 200`,
+      `
+      SELECT
+        j.*,
+        j.created_by AS created_by_user_id,
+        u.email AS creator_email,
+        u.role AS creator_role,
+        up.first_name AS creator_first_name,
+        up.last_name AS creator_last_name,
+        COALESCE(app_counts.applicants_count, 0)::int AS applicants_count
+      FROM jobs j
+      JOIN users u
+        ON u.id = j.created_by
+      LEFT JOIN user_profiles up
+        ON up.user_id = u.id
+      LEFT JOIN (
+        SELECT
+          job_id,
+          COUNT(*)::int AS applicants_count
+        FROM job_applications
+        GROUP BY job_id
+      ) app_counts
+        ON app_counts.job_id = j.id
+      ${where}
+      ORDER BY j.created_at DESC
+      LIMIT 200
+      `,
       params
     );
 
@@ -136,7 +160,22 @@ exports.getJobByIdAdmin = async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      `SELECT * FROM jobs WHERE id = $1 LIMIT 1`,
+      `
+      SELECT
+        j.*,
+        j.created_by AS created_by_user_id,
+        u.email AS creator_email,
+        u.role AS creator_role,
+        up.first_name AS creator_first_name,
+        up.last_name AS creator_last_name
+      FROM jobs j
+      JOIN users u
+        ON u.id = j.created_by
+      LEFT JOIN user_profiles up
+        ON up.user_id = u.id
+      WHERE j.id = $1
+      LIMIT 1
+      `,
       [id]
     );
 
@@ -171,6 +210,10 @@ exports.updateJob = async (req, res) => {
          employment_type = $4,
          salary_range = $5,
          status = $6::job_status,
+         published_at = CASE
+           WHEN $6::job_status = 'PUBLISHED' AND published_at IS NULL THEN NOW()
+           ELSE published_at
+         END,
          updated_at = NOW()
        WHERE id = $7
        RETURNING *`,
@@ -207,7 +250,13 @@ exports.updateJobStatus = async (req, res) => {
 
     const result = await pool.query(
       `UPDATE jobs
-       SET status = $1, updated_at = NOW()
+       SET
+         status = $1,
+         published_at = CASE
+           WHEN $1::job_status = 'PUBLISHED' AND published_at IS NULL THEN NOW()
+           ELSE published_at
+         END,
+         updated_at = NOW()
        WHERE id = $2
        RETURNING *`,
       [status, id]

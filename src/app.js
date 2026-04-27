@@ -24,4 +24,7 @@ app.get("/", (req, res) => {
   res.send("API Humatyx funcionando");
 });
 
+app.use("/notifications", require("./routes/notifications.routes"));
+
+
 module.exports = app;

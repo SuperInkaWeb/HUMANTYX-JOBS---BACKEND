@@ -17,12 +17,13 @@ exports.listPublishedJobs = async (req, res) => {
     const params = [];
     const where = [];
 
-    
     where.push(`status = 'PUBLISHED'`);
 
     if (q) {
       params.push(`%${q}%`);
-      where.push(`(title ILIKE $${params.length} OR description ILIKE $${params.length})`);
+      where.push(
+        `(title ILIKE $${params.length} OR description ILIKE $${params.length})`
+      );
     }
 
     if (location) {
@@ -30,20 +31,28 @@ exports.listPublishedJobs = async (req, res) => {
       where.push(`location ILIKE $${params.length}`);
     }
 
-    
-    const countSql = `SELECT COUNT(*)::int AS total FROM jobs WHERE ${where.join(" AND ")}`;
+    const countSql = `SELECT COUNT(*)::int AS total FROM jobs WHERE ${where.join(
+      " AND "
+    )}`;
     const countRes = await pool.query(countSql, params);
     const total = countRes.rows[0].total;
 
-   
     params.push(limit);
     params.push(offset);
 
     const dataSql = `
-      SELECT id, title, location, employment_type, salary_range, status, created_at
+      SELECT
+        id,
+        title,
+        location,
+        employment_type,
+        salary_range,
+        status,
+        created_at,
+        published_at
       FROM jobs
       WHERE ${where.join(" AND ")}
-      ORDER BY created_at DESC
+      ORDER BY COALESCE(published_at, created_at) DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `;
 
@@ -70,7 +79,17 @@ exports.getPublishedJobById = async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      `SELECT id, title, description, location, employment_type, salary_range, status, created_at, updated_at
+      `SELECT
+         id,
+         title,
+         description,
+         location,
+         employment_type,
+         salary_range,
+         status,
+         created_at,
+         published_at,
+         updated_at
        FROM jobs
        WHERE id = $1 AND status = 'PUBLISHED'
        LIMIT 1`,
