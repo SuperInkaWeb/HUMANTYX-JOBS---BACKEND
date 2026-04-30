@@ -238,6 +238,11 @@ exports.listApplicationsByJob = async (req, res) => {
         cp.availability,
         cp.profile_completed_at,
 
+        cf.original_name AS cv_original_name,
+        cf.mime_type AS cv_mime_type,
+        cf.size_bytes AS cv_size_bytes,
+        cf.created_at AS cv_created_at,
+
         u.email,
         EXISTS (
           SELECT 1
@@ -260,6 +265,9 @@ exports.listApplicationsByJob = async (req, res) => {
         ON up.user_id = u.id
       LEFT JOIN candidate_profiles cp
         ON cp.user_id = u.id
+      LEFT JOIN candidate_files cf
+        ON cf.user_id = u.id
+       AND cf.doc_type = 'CV'
       WHERE a.job_id = $1
       ORDER BY a.created_at DESC
       `,

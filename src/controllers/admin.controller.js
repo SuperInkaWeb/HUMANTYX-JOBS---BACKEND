@@ -6,6 +6,20 @@ function resolveCandidateId(params) {
   return params.candidateId || params.id;
 }
 
+function resolveCvFilePath(storedName) {
+  const safeStoredName = path.basename(storedName || "");
+
+  const possiblePaths = [
+    // Ruta actual donde se guardan los CV al subirlos desde el perfil del candidato.
+    path.join(__dirname, "..", "..", "uploads", safeStoredName),
+
+    // Compatibilidad por si algún CV antiguo quedó dentro de uploads/cvs.
+    path.join(__dirname, "..", "..", "uploads", "cvs", safeStoredName),
+  ];
+
+  return possiblePaths.find((filePath) => fs.existsSync(filePath)) || possiblePaths[0];
+}
+
 exports.listCandidates = async (req, res) => {
   try {
     const result = await pool.query(
@@ -93,12 +107,20 @@ exports.getCandidateById = async (req, res) => {
         cp.desired_salary,
         cp.availability,
         cp.profile_completed_at,
-        cp.updated_at AS candidate_profile_updated_at
+        cp.updated_at AS candidate_profile_updated_at,
+
+        cf.original_name AS cv_original_name,
+        cf.mime_type AS cv_mime_type,
+        cf.size_bytes AS cv_size_bytes,
+        cf.created_at AS cv_created_at
       FROM users u
       LEFT JOIN user_profiles up
         ON up.user_id = u.id
       LEFT JOIN candidate_profiles cp
         ON cp.user_id = u.id
+      LEFT JOIN candidate_files cf
+        ON cf.user_id = u.id
+       AND cf.doc_type = 'CV'
       WHERE u.id = $1
         AND u.role = 'CANDIDATE'
       LIMIT 1
@@ -194,8 +216,7 @@ exports.getCandidateCv = async (req, res) => {
     }
 
     const cv = result.rows[0];
-    const uploadsDir = path.join(__dirname, "..", "..", "uploads", "cvs");
-    const filePath = path.join(uploadsDir, cv.stored_name);
+    const filePath = resolveCvFilePath(cv.stored_name);
 
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ message: "Archivo CV no encontrado" });
@@ -236,8 +257,7 @@ exports.previewCandidateCv = async (req, res) => {
     }
 
     const cv = result.rows[0];
-    const uploadsDir = path.join(__dirname, "..", "..", "uploads", "cvs");
-    const filePath = path.join(uploadsDir, cv.stored_name);
+    const filePath = resolveCvFilePath(cv.stored_name);
 
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ message: "Archivo CV no encontrado" });

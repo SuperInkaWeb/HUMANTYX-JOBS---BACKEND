@@ -213,14 +213,7 @@ El sistema maneja tres roles principales:
 | PATCH | `/notifications/read-by-context` | Marca como leídas las notificaciones relacionadas a una postulación o vacante específica. |
 | PATCH | `/notifications/:id/read` | Marca una notificación específica como leída. |
 
-### Notificaciones y mensajes
 
-- Listado de mensajes por postulación.
-- Envío de mensajes entre reclutador y candidato.
-- Conteo de mensajes no leídos.
-- Listado de notificaciones.
-- Conteo de notificaciones no leídas.
-- Marcado de notificaciones como leídas.
 
 ## Despliegue
 

@@ -7,6 +7,8 @@ const users = require("../controllers/admin.users.controller");
 router.post("/invite", requireAuth, requireRole("ADMIN"), users.inviteUser);
 router.get("/", requireAuth, requireRole("ADMIN"), users.listUsers);
 router.patch("/:id/status", requireAuth, requireRole("ADMIN"), users.updateUserStatus);
+
+
 router.get(
   "/user-invites",
   requireAuth,
