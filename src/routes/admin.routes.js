@@ -51,4 +51,11 @@ router.get(
   admin.previewCandidateCv
 );
 
+router.get(
+  "/dashboard/summary",
+  requireAuth,
+  requireRole("ADMIN", "RRHH"),
+  admin.getDashboardSummary
+);
+
 module.exports = router;
