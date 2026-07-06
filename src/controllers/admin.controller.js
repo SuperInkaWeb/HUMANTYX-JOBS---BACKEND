@@ -272,3 +272,45 @@ exports.previewCandidateCv = async (req, res) => {
     return res.status(500).json({ message: "Error previsualizando CV" });
   }
 };
+
+exports.getDashboardSummary = async (req, res) => {
+  try {
+    const jobsRes = await pool.query(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM jobs
+      WHERE status = 'PUBLISHED'
+      `
+    );
+
+    const candidatesRes = await pool.query(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM users
+      WHERE role = 'CANDIDATE'
+      `
+    );
+
+    const applicationsRes = await pool.query(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM job_applications
+      `
+    );
+
+    return res.json({
+      summary: {
+        active_jobs: jobsRes.rows[0].count,
+        candidates: candidatesRes.rows[0].count,
+        applications: applicationsRes.rows[0].count,
+        invites: 0,
+      },
+    });
+  } catch (err) {
+    console.error("Dashboard summary error:", err);
+    return res.status(500).json({
+      message: "Error obteniendo resumen del dashboard",
+      detail: err.message,
+    });
+  }
+};
