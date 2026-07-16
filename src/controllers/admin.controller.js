@@ -9,15 +9,29 @@ function resolveCandidateId(params) {
 function resolveCvFilePath(storedName) {
   const safeStoredName = path.basename(storedName || "");
 
+  if (!safeStoredName) {
+    return null;
+  }
+
   const possiblePaths = [
-    // Ruta actual donde se guardan los CV al subirlos desde el perfil del candidato.
+    // Ruta principal utilizada actualmente por Multer.
+    path.join(process.cwd(), "uploads", safeStoredName),
+
+    // Compatibilidad con archivos antiguos guardados en uploads/cvs.
+    path.join(process.cwd(), "uploads", "cvs", safeStoredName),
+
+    // Compatibilidad adicional según la ubicación del controlador.
     path.join(__dirname, "..", "..", "uploads", safeStoredName),
 
-    // Compatibilidad por si algún CV antiguo quedó dentro de uploads/cvs.
     path.join(__dirname, "..", "..", "uploads", "cvs", safeStoredName),
   ];
 
-  return possiblePaths.find((filePath) => fs.existsSync(filePath)) || possiblePaths[0];
+  return possiblePaths.find((filePath) => fs.existsSync(filePath)) || null;
+}
+
+function getSafeOriginalFileName(originalName, fallback = "curriculum.pdf") {
+  const safeName = path.basename(originalName || "").trim();
+  return safeName || fallback;
 }
 
 exports.listCandidates = async (req, res) => {
@@ -62,10 +76,15 @@ exports.listCandidates = async (req, res) => {
       `
     );
 
-    return res.json({ candidates: result.rows });
+    return res.json({
+      candidates: result.rows,
+    });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Error listando candidatos" });
+    console.error("Error listando candidatos:", err);
+
+    return res.status(500).json({
+      message: "Error listando candidatos",
+    });
   }
 };
 
@@ -129,7 +148,9 @@ exports.getCandidateById = async (req, res) => {
     );
 
     if (!result.rows.length) {
-      return res.status(404).json({ message: "Candidato no encontrado" });
+      return res.status(404).json({
+        message: "Candidato no encontrado",
+      });
     }
 
     const candidate = result.rows[0];
@@ -183,8 +204,11 @@ exports.getCandidateById = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Error obteniendo candidato" });
+    console.error("Error obteniendo candidato:", err);
+
+    return res.status(500).json({
+      message: "Error obteniendo candidato",
+    });
   }
 };
 
@@ -206,26 +230,76 @@ exports.getCandidateCv = async (req, res) => {
       FROM candidate_files cf
       WHERE cf.user_id = $1
         AND cf.doc_type = 'CV'
+      ORDER BY cf.created_at DESC
       LIMIT 1
       `,
       [candidateId]
     );
 
     if (!result.rows.length) {
-      return res.status(404).json({ message: "CV no encontrado" });
+      return res.status(404).json({
+        code: "CV_NOT_REGISTERED",
+        message: "Este postulante aún no ha subido un CV.",
+      });
     }
 
     const cv = result.rows[0];
     const filePath = resolveCvFilePath(cv.stored_name);
 
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: "Archivo CV no encontrado" });
+    if (!filePath) {
+      console.error("========================================");
+      console.error("CV NO ENCONTRADO");
+      console.error("Candidate ID:", candidateId);
+      console.error("Nombre original:", cv.original_name);
+      console.error("Nombre almacenado:", cv.stored_name);
+      console.error(
+        "Carpeta uploads:",
+        path.join(process.cwd(), "uploads")
+      );
+      console.error("========================================");
+
+      return res.status(404).json({
+        code: "CV_FILE_NOT_FOUND",
+        message:
+          "El CV está registrado, pero el archivo no se encuentra en el servidor.",
+      });
     }
 
-    return res.download(filePath, cv.original_name);
+    const safeOriginalName = getSafeOriginalFileName(cv.original_name);
+
+    res.setHeader(
+      "Content-Type",
+      cv.mime_type || "application/octet-stream"
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(safeOriginalName)}`
+    );
+
+    return res.sendFile(filePath, (error) => {
+      if (!error) return;
+
+      console.error("Error enviando CV:", {
+        candidateId,
+        filePath,
+        error: error.message,
+      });
+
+      if (!res.headersSent) {
+        return res.status(500).json({
+          code: "CV_SEND_ERROR",
+          message: "No se pudo enviar el archivo CV.",
+        });
+      }
+    });
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Error descargando CV" });
+    console.error("Error descargando CV:", err);
+
+    return res.status(500).json({
+      code: "CV_DOWNLOAD_ERROR",
+      message: "Error descargando CV",
+    });
   }
 };
 
@@ -247,29 +321,72 @@ exports.previewCandidateCv = async (req, res) => {
       FROM candidate_files cf
       WHERE cf.user_id = $1
         AND cf.doc_type = 'CV'
+      ORDER BY cf.created_at DESC
       LIMIT 1
       `,
       [candidateId]
     );
 
     if (!result.rows.length) {
-      return res.status(404).json({ message: "CV no encontrado" });
+      return res.status(404).json({
+        code: "CV_NOT_REGISTERED",
+        message: "Este postulante aún no ha subido un CV.",
+      });
     }
 
     const cv = result.rows[0];
     const filePath = resolveCvFilePath(cv.stored_name);
 
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ message: "Archivo CV no encontrado" });
+    if (!filePath) {
+      console.error("CV NO ENCONTRADO PARA PREVISUALIZACIÓN", {
+        candidateId,
+        originalName: cv.original_name,
+        storedName: cv.stored_name,
+        uploadsDirectory: path.join(process.cwd(), "uploads"),
+      });
+
+      return res.status(404).json({
+        code: "CV_FILE_NOT_FOUND",
+        message:
+          "El CV está registrado, pero el archivo no se encuentra en el servidor.",
+      });
     }
 
-    res.setHeader("Content-Type", cv.mime_type || "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${cv.original_name}"`);
+    const safeOriginalName = getSafeOriginalFileName(cv.original_name);
 
-    return fs.createReadStream(filePath).pipe(res);
+    res.setHeader(
+      "Content-Type",
+      cv.mime_type || "application/pdf"
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename*=UTF-8''${encodeURIComponent(safeOriginalName)}`
+    );
+
+    const fileStream = fs.createReadStream(filePath);
+
+    fileStream.on("error", (error) => {
+      console.error("Error leyendo CV para previsualización:", error);
+
+      if (!res.headersSent) {
+        return res.status(500).json({
+          code: "CV_READ_ERROR",
+          message: "No se pudo leer el archivo CV.",
+        });
+      }
+
+      res.destroy(error);
+    });
+
+    return fileStream.pipe(res);
   } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Error previsualizando CV" });
+    console.error("Error previsualizando CV:", err);
+
+    return res.status(500).json({
+      code: "CV_PREVIEW_ERROR",
+      message: "Error previsualizando CV",
+    });
   }
 };
 
@@ -308,6 +425,7 @@ exports.getDashboardSummary = async (req, res) => {
     });
   } catch (err) {
     console.error("Dashboard summary error:", err);
+
     return res.status(500).json({
       message: "Error obteniendo resumen del dashboard",
       detail: err.message,
