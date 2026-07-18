@@ -12,6 +12,31 @@ function hashToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+function normalizeDocumentType(documentType) {
+  const map = {
+    // Perú
+    PE_DNI: "DNI",
+    PE_CE: "CE",
+    PE_PASSPORT: "PASSPORT",
+    PE_PTP: "PTP",
+    PE_RUC: "RUC",
+
+    // Ecuador
+    EC_CI: "DNI",
+    EC_PASSPORT: "PASSPORT",
+
+    // Compatibilidad
+    DNI: "DNI",
+    CE: "CE",
+    PASSPORT: "PASSPORT",
+    PTP: "PTP",
+    RUC: "RUC",
+    OTHER: "OTHER",
+  };
+
+  return map[documentType] || documentType;
+}
+
 /* =========================
    REGISTER
 ========================= */
@@ -334,6 +359,7 @@ exports.updateMyProfile = async (req, res) => {
       academic_items,
       work_items,
     } = req.body || {};
+    const documentTypeToSave = normalizeDocumentType(document_type);
 
     const hasGeneralFields =
       first_name !== undefined ||
@@ -400,22 +426,22 @@ exports.updateMyProfile = async (req, res) => {
       RETURNING *
       `,
       [
-        first_name ?? null,
-        last_name ?? null,
-        phone ?? null,
-        document_type ?? null,
-        document_number ?? null,
-        country ?? null,
-        department ?? null,
-        city ?? null,
-        district ?? null,
-        address_line ?? null,
-        postal_code ?? null,
-        birth_date ?? null,
-        gender ?? null,
-        marital_status ?? null,
-        userId,
-      ]
+  first_name ?? null,
+  last_name ?? null,
+  phone ?? null,
+  documentTypeToSave ?? null,
+  document_number ?? null,
+  country ?? null,
+  department ?? null,
+  city ?? null,
+  district ?? null,
+  address_line ?? null,
+  postal_code ?? null,
+  birth_date ?? null,
+  gender ?? null,
+  marital_status ?? null,
+  userId,
+]
     );
 
     let candidateProfile = null;
