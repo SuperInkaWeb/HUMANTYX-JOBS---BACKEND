@@ -432,3 +432,149 @@ exports.getDashboardSummary = async (req, res) => {
     });
   }
 };
+
+exports.deleteCandidate = async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const candidateId = req.params.id;
+
+    await client.query("BEGIN");
+
+    const candidateRes = await client.query(
+      `
+      SELECT
+        id,
+        email,
+        role
+      FROM users
+      WHERE id = $1
+        AND role = 'CANDIDATE'
+      LIMIT 1
+      `,
+      [candidateId]
+    );
+
+    if (!candidateRes.rows.length) {
+      await client.query("ROLLBACK");
+
+      return res.status(404).json({
+        message: "Candidato no encontrado",
+      });
+    }
+
+    const applicationsRes = await client.query(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM job_applications
+      WHERE candidate_id = $1
+      `,
+      [candidateId]
+    );
+
+    const applicationsCount = applicationsRes.rows[0].count;
+
+    if (applicationsCount > 0) {
+      await client.query("ROLLBACK");
+
+      return res.status(409).json({
+        code: "CANDIDATE_HAS_APPLICATIONS",
+        message:
+          "Este candidato tiene postulaciones registradas y no puede eliminarse. Debe archivarse.",
+        applications_count: applicationsCount,
+      });
+    }
+
+    const filesRes = await client.query(
+      `
+      SELECT stored_name
+      FROM candidate_files
+      WHERE user_id = $1
+      `,
+      [candidateId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM candidate_work_items
+      WHERE user_id = $1
+      `,
+      [candidateId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM candidate_academic_items
+      WHERE user_id = $1
+      `,
+      [candidateId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM candidate_files
+      WHERE user_id = $1
+      `,
+      [candidateId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM candidate_profiles
+      WHERE user_id = $1
+      `,
+      [candidateId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM user_profiles
+      WHERE user_id = $1
+      `,
+      [candidateId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM users
+      WHERE id = $1
+        AND role = 'CANDIDATE'
+      `,
+      [candidateId]
+    );
+
+    await client.query("COMMIT");
+
+    for (const file of filesRes.rows) {
+      const filePath = resolveCvFilePath(file.stored_name);
+
+      if (!filePath) continue;
+
+      try {
+        fs.unlinkSync(filePath);
+      } catch (fileError) {
+        console.error("No se pudo eliminar el archivo CV:", {
+          candidateId,
+          filePath,
+          error: fileError.message,
+        });
+      }
+    }
+
+    return res.json({
+      message: "Candidato eliminado correctamente",
+      candidate_id: candidateId,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+
+    console.error("Error eliminando candidato:", err);
+
+    return res.status(500).json({
+      message: "Error eliminando candidato",
+      detail: err.message,
+    });
+  } finally {
+    client.release();
+  }
+};

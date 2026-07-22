@@ -4,29 +4,38 @@ const requireRole = require("../middlewares/requireRole");
 const requireJobCandidateAccess = require("../middlewares/requireJobCandidateAccess");
 const admin = require("../controllers/admin.controller");
 
-// Globales: solo ADMIN
+// Lista general de candidatos: ADMIN y RRHH
 router.get(
   "/candidates",
   requireAuth,
-  requireRole("ADMIN"),
+  requireRole("ADMIN", "RRHH"),
   admin.listCandidates
 );
 
+// Perfil general de candidato: ADMIN y RRHH
 router.get(
   "/candidates/:id",
   requireAuth,
-  requireRole("ADMIN"),
+  requireRole("ADMIN", "RRHH"),
   admin.getCandidateById
 );
 
+// CV general del candidato: ADMIN y RRHH
 router.get(
   "/candidates/:id/cv",
   requireAuth,
-  requireRole("ADMIN"),
+  requireRole("ADMIN", "RRHH"),
   admin.getCandidateCv
 );
 
-// Scoped por vacante: ADMIN y RRHH con validación de ownership
+router.delete(
+  "/candidates/:id",
+  requireAuth,
+  requireRole("ADMIN"),
+  admin.deleteCandidate
+);
+
+// Candidatos por vacante
 router.get(
   "/jobs/:jobId/candidates/:candidateId/profile",
   requireAuth,
